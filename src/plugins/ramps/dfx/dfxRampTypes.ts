@@ -1,6 +1,8 @@
 import {
   asArray,
   asBoolean,
+  asEither,
+  asNull,
   asNumber,
   asObject,
   asOptional,
@@ -43,7 +45,7 @@ export const asDfxAsset = asObject({
   name: asString,
   uniqueName: asString,
   blockchain: asString,
-  chainId: asOptional(asString),
+  chainId: asOptional(asEither(asString, asNull)),
   buyable: asBoolean,
   sellable: asBoolean
 })
@@ -52,9 +54,9 @@ export const asDfxAssets = asArray(asDfxAsset)
 
 export const asDfxCountry = asObject({
   symbol: asString,
-  mapiLocationAllowed: asOptional(asBoolean),
-  mapiCardAllowed: asOptional(asBoolean),
-  mapiBankAllowed: asOptional(asBoolean)
+  locationAllowed: asOptional(asBoolean),
+  cardAllowed: asOptional(asBoolean),
+  bankAllowed: asOptional(asBoolean)
 })
 export type DfxCountry = ReturnType<typeof asDfxCountry>
 export const asDfxCountries = asArray(asDfxCountry)

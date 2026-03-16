@@ -100,6 +100,23 @@ const EDGE_TO_DFX_BLOCKCHAIN: StringMap = Object.fromEntries(
   Object.entries(DFX_BLOCKCHAIN_MAP).map(([k, v]) => [v, k])
 )
 
+// Native coin names per DFX blockchain. DFX returns wrapped-token contract
+// addresses even for native coins (e.g. WETH address for ETH). We detect
+// native coins by name and set tokenId to null instead of looking up by contract.
+const DFX_NATIVE_COIN_NAMES: Record<string, string> = {
+  Bitcoin: 'BTC',
+  Ethereum: 'ETH',
+  Arbitrum: 'ETH',
+  Optimism: 'ETH',
+  Polygon: 'POL',
+  Base: 'ETH',
+  BinanceSmartChain: 'BNB',
+  Solana: 'SOL',
+  Tron: 'TRX',
+  Monero: 'XMR',
+  Cardano: 'ADA'
+}
+
 // Countries where DFX is not available
 const BLOCKED_COUNTRIES = new Set(['IR', 'KP', 'MM', 'US', 'IL'])
 
@@ -288,16 +305,22 @@ export const dfxRampPlugin: RampPluginFactory = (
         if (edgePluginId == null) continue
 
         let tokenId: EdgeTokenId
-        if (asset.chainId != null) {
+        // DFX returns wrapped-token contract addresses even for native coins
+        // (e.g. WETH for ETH). Detect native coins by name match.
+        const nativeCoinName = DFX_NATIVE_COIN_NAMES[asset.blockchain]
+        const isNativeCoin =
+          asset.chainId == null || asset.name === nativeCoinName
+
+        if (isNativeCoin) {
+          tokenId = null
+        } else {
           const resolved = findTokenIdByNetworkLocation({
             account,
             pluginId: edgePluginId,
-            networkLocation: { contractAddress: asset.chainId }
+            networkLocation: { contractAddress: asset.chainId! }
           })
           if (resolved === undefined) continue
           tokenId = resolved
-        } else {
-          tokenId = null
         }
 
         for (const dir of ['buy', 'sell'] as FiatDirection[]) {
@@ -324,14 +347,14 @@ export const dfxRampPlugin: RampPluginFactory = (
       const countries = asDfxCountries(await countriesRes.json())
       for (const country of countries) {
         if (BLOCKED_COUNTRIES.has(country.symbol)) continue
-        if (country.mapiLocationAllowed !== true) continue
+        if (country.locationAllowed !== true) continue
 
         // Buy: bank + card
-        if (country.mapiBankAllowed === true) {
+        if (country.bankAllowed === true) {
           addExactRegion(freshConfig.allowedCountryCodes.buy, country.symbol)
           addExactRegion(freshConfig.allowedCountryCodes.sell, country.symbol)
         }
-        if (country.mapiCardAllowed === true) {
+        if (country.cardAllowed === true) {
           addExactRegion(freshConfig.allowedCountryCodes.buy, country.symbol)
         }
       }
@@ -567,7 +590,8 @@ export const dfxRampPlugin: RampPluginFactory = (
       const errors: unknown[] = []
 
       for (const candidate of candidates) {
-        const { paymentType, dfxPaymentMethod, cryptoToken } = candidate
+        const { paymentType, dfxPaymentMethod, cryptoToken, fiatObj } =
+          candidate
         try {
           const dfxAsset = cryptoToken.otherInfo as DfxAsset
 
@@ -576,11 +600,11 @@ export const dfxRampPlugin: RampPluginFactory = (
             EDGE_TO_DFX_BLOCKCHAIN[request.wallet.currencyInfo.pluginId]
           if (dfxBlockchain == null) continue
 
-          // Build quote request body
+          // Build quote request body — DFX API expects object references
           const endpoint = direction === 'buy' ? 'buy/quote' : 'sell/quote'
           const quoteBody: Record<string, unknown> = {
-            currency: fiatCode,
-            asset: dfxAsset.uniqueName,
+            currency: { id: fiatObj.id },
+            asset: { id: dfxAsset.id, blockchain: dfxAsset.blockchain },
             paymentMethod: dfxPaymentMethod
           }
 
@@ -736,11 +760,13 @@ export const dfxRampPlugin: RampPluginFactory = (
                 const receiveAddress = addresses[0].publicAddress
 
                 const paymentInfoBody = {
-                  currency: fiatCode,
-                  asset: dfxAsset.uniqueName,
+                  currency: { id: fiatObj.id },
+                  asset: {
+                    id: dfxAsset.id,
+                    blockchain: dfxAsset.blockchain
+                  },
                   amount: parseFloat(fiatAmount),
                   paymentMethod: 'Bank',
-                  blockchain: dfxBlockchain,
                   targetAddress: receiveAddress
                 }
 
@@ -877,11 +903,13 @@ export const dfxRampPlugin: RampPluginFactory = (
                 const senderAddress = addresses[0].publicAddress
 
                 const sellBody = {
-                  currency: fiatCode,
-                  asset: dfxAsset.uniqueName,
+                  currency: { id: fiatObj.id },
+                  asset: {
+                    id: dfxAsset.id,
+                    blockchain: dfxAsset.blockchain
+                  },
                   amount: parseFloat(cryptoAmount),
                   paymentMethod: 'Bank',
-                  blockchain: dfxBlockchain,
                   sourceAddress: senderAddress
                 }
 
