@@ -115,4 +115,19 @@ export function* constraintGenerator(
   if (params.rampPluginId === 'infinite') {
     yield true
   }
+
+  //
+  // DFX
+  //
+
+  if (params.rampPluginId === 'dfx') {
+    // DFX blocked in IR, KP, MM, US, IL
+    const blockedCountries = ['IR', 'KP', 'MM', 'US', 'IL']
+    yield !blockedCountries.includes(params.regionCode.countryCode)
+
+    // Card (credit) is buy-only
+    if (params.paymentType === 'credit' && params.direction === 'sell') {
+      yield false
+    }
+  }
 }
