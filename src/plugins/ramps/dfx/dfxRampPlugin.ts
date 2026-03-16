@@ -308,19 +308,22 @@ export const dfxRampPlugin: RampPluginFactory = (
         // DFX returns wrapped-token contract addresses even for native coins
         // (e.g. WETH for ETH). Detect native coins by name match.
         const nativeCoinName = DFX_NATIVE_COIN_NAMES[asset.blockchain]
-        const isNativeCoin =
-          asset.chainId == null || asset.name === nativeCoinName
 
-        if (isNativeCoin) {
+        if (asset.name === nativeCoinName) {
+          // Native coin for this blockchain
           tokenId = null
-        } else {
+        } else if (asset.chainId != null) {
+          // Token with contract address
           const resolved = findTokenIdByNetworkLocation({
             account,
             pluginId: edgePluginId,
-            networkLocation: { contractAddress: asset.chainId! }
+            networkLocation: { contractAddress: asset.chainId }
           })
           if (resolved === undefined) continue
           tokenId = resolved
+        } else {
+          // No contract address and not native coin — skip
+          continue
         }
 
         for (const dir of ['buy', 'sell'] as FiatDirection[]) {
