@@ -92,7 +92,8 @@ const DFX_BLOCKCHAIN_MAP: StringMap = {
   Solana: 'solana',
   Tron: 'tron',
   Monero: 'monero',
-  Cardano: 'cardano'
+  Cardano: 'cardano',
+  Zano: 'zano'
 }
 
 // Reverse map: Edge pluginId → DFX blockchain name
@@ -114,7 +115,8 @@ const DFX_NATIVE_COIN_NAMES: Record<string, string> = {
   Solana: 'SOL',
   Tron: 'TRX',
   Monero: 'XMR',
-  Cardano: 'ADA'
+  Cardano: 'ADA',
+  Zano: 'ZANO'
 }
 
 // Countries where DFX is not available
