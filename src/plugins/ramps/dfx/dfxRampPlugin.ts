@@ -169,7 +169,7 @@ const AUTH_TTL = 15 * 60 * 1000
 // ---------------------------------------------------------------------------
 
 const buildAuthMessage = (address: string): string =>
-  `By_signing_this_message,_you_confirm_that_you_are_the_sole_owner_of_the_provided_blockchain_address._Your_ID:_${address}`
+  `By_signing_this_message,_you_confirm_that_you_are_the_sole_owner_of_the_provided_Blockchain_address._Your_ID:_${address}`
 
 // ---------------------------------------------------------------------------
 // Plugin factory
@@ -227,7 +227,7 @@ export const dfxRampPlugin: RampPluginFactory = (
       body: JSON.stringify({
         address,
         signature,
-        wallet: 'EdgeWallet'
+        wallet: 'arkade'
       })
     })
 
@@ -782,17 +782,27 @@ export const dfxRampPlugin: RampPluginFactory = (
                   return
                 }
                 if (!piResponse.ok) {
+                  const errBody = await piResponse.text()
                   throw new Error(
-                    `DFX buy paymentInfos failed: ${piResponse.status}`
+                    `DFX buy paymentInfos failed: ${piResponse.status} ${errBody}`
                   )
                 }
 
-                const paymentInfo = asDfxBuyPaymentInfo(await piResponse.json())
+                const piJson = await piResponse.json()
+                const paymentInfo = asDfxBuyPaymentInfo(piJson)
+
+                if (paymentInfo.isValid === false) {
+                  const errMsg = paymentInfo.error ?? 'Unknown'
+                  throw new Error(`DFX: ${errMsg}`)
+                }
+
+                const piCurrency =
+                  paymentInfo.currency?.name ?? displayFiatCurrencyCode
 
                 const transferInfo: FiatPluginSepaTransferInfo = {
                   input: {
-                    amount: `${paymentInfo.amount} ${paymentInfo.currency}`,
-                    currency: paymentInfo.currency
+                    amount: `${paymentInfo.amount} ${piCurrency}`,
+                    currency: piCurrency
                   },
                   output: {
                     amount: cryptoAmount,
@@ -801,8 +811,8 @@ export const dfxRampPlugin: RampPluginFactory = (
                   },
                   paymentDetails: {
                     id: paymentInfo.id.toString(),
-                    iban: paymentInfo.bankAccount.iban,
-                    swiftBic: paymentInfo.bankAccount.bic ?? '',
+                    iban: paymentInfo.iban ?? '',
+                    swiftBic: paymentInfo.bic ?? '',
                     recipient: 'DFX AG',
                     reference: paymentInfo.remittanceInfo ?? ''
                   }
