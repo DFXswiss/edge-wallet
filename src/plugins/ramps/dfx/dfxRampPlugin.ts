@@ -6,11 +6,14 @@ import type {
   EdgeTokenId,
   EdgeTxActionFiat
 } from 'edge-core-js'
+import React from 'react'
 import { sprintf } from 'sprintf-js'
 
 import { showButtonsModal } from '../../../components/modals/ButtonsModal'
+import { TextInputModal } from '../../../components/modals/TextInputModal'
 import type { SendScene2Params } from '../../../components/scenes/SendScene2'
 import {
+  Airship,
   showError,
   showToast
 } from '../../../components/services/AirshipInstance'
@@ -73,7 +76,7 @@ import {
 } from './dfxRampTypes'
 
 const pluginId = 'dfx'
-const partnerIcon = 'https://content.edge.app/dfx-logo.png'
+const partnerIcon = 'https://app.dfx.swiss/logo.png'
 const pluginDisplayName = 'DFX.swiss'
 const supportEmail = 'support@dfx.swiss'
 
@@ -821,6 +824,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                 await new Promise<void>((resolve, _reject) => {
                   navigation.navigate('guiPluginInfoDisplay', {
                     headerTitle: lstrings.fiat_plugin_buy_complete_title,
+                    supportUrl: `${webAppUrl}/support/issue?session=${token}`,
                     promptMessage: sprintf(
                       lstrings.fiat_plugin_buy_complete_message_s,
                       cryptoAmount,
@@ -831,6 +835,73 @@ export const dfxRampPlugin: RampPluginFactory = (
                     ),
                     transferInfo,
                     onDone: async () => {
+                      // Check if user has email registered
+                      try {
+                        const userRes = await fetch(
+                          `${apiUrl.replace('/v1', '/v2')}/user`,
+                          {
+                            headers: {
+                              Authorization: `Bearer ${token}`
+                            }
+                          }
+                        )
+                        if (userRes.ok) {
+                          const user = await userRes.json()
+                          if (user.mail == null) {
+                            const email = await Airship.show<
+                              string | undefined
+                            >(bridge =>
+                              React.createElement(TextInputModal, {
+                                bridge,
+                                title: lstrings.form_field_title_email_address,
+                                message:
+                                  lstrings.ramp_kyc_email_required_message,
+                                inputLabel:
+                                  lstrings.form_field_title_email_address,
+                                keyboardType: 'email-address' as const,
+                                autoCapitalize: 'none' as const,
+                                autoCorrect: false,
+                                returnKeyType: 'go' as const,
+                                onSubmit: async (text: string) => {
+                                  const emailRegex =
+                                    /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+                                  if (!emailRegex.test(text)) {
+                                    return lstrings.invalid_email
+                                  }
+                                  return true
+                                }
+                              })
+                            )
+                            if (email != null) {
+                              await fetch(
+                                `${apiUrl.replace('/v1', '/v2')}/user/mail`,
+                                {
+                                  method: 'PUT',
+                                  headers: {
+                                    'Content-Type': 'application/json',
+                                    Authorization: `Bearer ${token}`
+                                  },
+                                  body: JSON.stringify({ mail: email })
+                                }
+                              )
+                            }
+                          }
+                        }
+                      } catch {}
+
+                      // Confirm the buy order with DFX
+                      try {
+                        await fetch(
+                          `${apiUrl}/buy/paymentInfos/${paymentInfo.id}/confirm`,
+                          {
+                            method: 'PUT',
+                            headers: {
+                              Authorization: `Bearer ${token}`
+                            }
+                          }
+                        )
+                      } catch {}
+
                       onLogEvent('Buy_Success', {
                         conversionValues: {
                           conversionType: 'buy',
@@ -845,6 +916,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                           orderId: paymentInfo.id.toString()
                         }
                       })
+                      navigation.goBack()
                       resolve()
                     }
                   })
