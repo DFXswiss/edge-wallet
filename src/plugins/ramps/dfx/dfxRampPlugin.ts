@@ -57,7 +57,7 @@ import {
   validateRampQuoteRequest
 } from '../utils/constraintUtils'
 import { getSettlementRange } from '../utils/getSettlementRange'
-import { openExternalWebView, openWebView } from '../utils/webViewUtils'
+import { openWebView } from '../utils/webViewUtils'
 import {
   asDfxAssets,
   asDfxAuthResponse,
@@ -127,8 +127,7 @@ const BLOCKED_COUNTRIES = new Set(['IR', 'KP', 'MM', 'US', 'IL'])
 // ---------------------------------------------------------------------------
 
 const DFX_PAYMENT_TYPE_MAP: Record<DfxPaymentMethod, FiatPaymentType> = {
-  Bank: 'sepa',
-  Card: 'credit'
+  Bank: 'sepa'
 }
 
 // ---------------------------------------------------------------------------
@@ -259,8 +258,7 @@ export const dfxRampPlugin: RampPluginFactory = (
       allowedCountryCodes: { buy: {}, sell: {} },
       allowedCurrencyCodes: {
         buy: {
-          sepa: { providerId: pluginId, fiat: {}, crypto: {} },
-          credit: { providerId: pluginId, fiat: {}, crypto: {} }
+          sepa: { providerId: pluginId, fiat: {}, crypto: {} }
         },
         sell: {
           sepa: { providerId: pluginId, fiat: {}, crypto: {} }
@@ -354,13 +352,9 @@ export const dfxRampPlugin: RampPluginFactory = (
         if (BLOCKED_COUNTRIES.has(country.symbol)) continue
         if (country.locationAllowed !== true) continue
 
-        // Buy: bank + card
         if (country.bankAllowed === true) {
           addExactRegion(freshConfig.allowedCountryCodes.buy, country.symbol)
           addExactRegion(freshConfig.allowedCountryCodes.sell, country.symbol)
-        }
-        if (country.cardAllowed === true) {
-          addExactRegion(freshConfig.allowedCountryCodes.buy, country.symbol)
         }
       }
     }
@@ -589,7 +583,6 @@ export const dfxRampPlugin: RampPluginFactory = (
       }
 
       const displayFiatCurrencyCode = removeIsoPrefix(fiatCurrencyCode)
-      const fiatCode = removeIsoPrefix(fiatCurrencyCode)
 
       const quotes: RampQuote[] = []
       const errors: unknown[] = []
@@ -845,56 +838,6 @@ export const dfxRampPlugin: RampPluginFactory = (
                       resolve()
                     }
                   })
-                })
-              } else if (direction === 'buy' && dfxPaymentMethod === 'Card') {
-                // -----------------------------------------------------------
-                // BUY via Card — DFX webview
-                // -----------------------------------------------------------
-                const token = await getDfxAuth(coreWallet)
-
-                const cardUrl =
-                  `${webAppUrl}/buy?session=${token}` +
-                  `&asset-out=${dfxAsset.uniqueName}` +
-                  `&blockchain=${dfxBlockchain}` +
-                  `&asset-in=${fiatCode}` +
-                  `&amount-in=${fiatAmount}`
-
-                await openExternalWebView({
-                  url: cardUrl,
-                  deeplink: {
-                    direction: 'buy',
-                    providerId: pluginId,
-                    handler: async _link => {
-                      onLogEvent('Buy_Success', {
-                        conversionValues: {
-                          conversionType: 'buy',
-                          sourceFiatCurrencyCode: fiatCurrencyCode,
-                          sourceFiatAmount: fiatAmount,
-                          destAmount: new CryptoAmount({
-                            currencyConfig: coreWallet.currencyConfig,
-                            tokenId,
-                            exchangeAmount: cryptoAmount
-                          }),
-                          fiatProviderId: pluginId
-                        }
-                      })
-
-                      await showButtonsModal({
-                        buttons: {
-                          ok: { label: lstrings.string_ok, type: 'primary' }
-                        },
-                        title: lstrings.fiat_plugin_buy_complete_title,
-                        message: sprintf(
-                          lstrings.fiat_plugin_buy_complete_message_s,
-                          cryptoAmount,
-                          displayCurrencyCode,
-                          fiatAmount,
-                          displayFiatCurrencyCode,
-                          '1'
-                        )
-                      })
-                    }
-                  }
                 })
               } else if (direction === 'sell') {
                 // -----------------------------------------------------------

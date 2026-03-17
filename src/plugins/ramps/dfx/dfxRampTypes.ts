@@ -55,7 +55,6 @@ export const asDfxAssets = asArray(asDfxAsset)
 export const asDfxCountry = asObject({
   symbol: asString,
   locationAllowed: asOptional(asBoolean),
-  cardAllowed: asOptional(asBoolean),
   bankAllowed: asOptional(asBoolean)
 })
 export type DfxCountry = ReturnType<typeof asDfxCountry>
@@ -116,5 +115,5 @@ export type DfxSellPaymentInfo = ReturnType<typeof asDfxSellPaymentInfo>
 // Payment method
 // ---------------------------------------------------------------------------
 
-export const asDfxPaymentMethod = asValue('Bank', 'Card')
+export const asDfxPaymentMethod = asValue('Bank')
 export type DfxPaymentMethod = ReturnType<typeof asDfxPaymentMethod>
