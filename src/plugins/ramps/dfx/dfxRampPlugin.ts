@@ -408,6 +408,9 @@ export const dfxRampPlugin: RampPluginFactory = (
     wallet: EdgeCurrencyWallet
   ): Promise<string> => {
     const addresses = await wallet.getAddresses({ tokenId: null })
+    if (addresses.length === 0) {
+      throw new Error('Wallet has no addresses')
+    }
     const getPriority = (type: string | undefined): number => {
       if (type === 'segwitAddress' || type === 'transparentAddress') return 1
       return 2
@@ -923,9 +926,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                             }
                           }
                         }
-                      } catch (e: unknown) {
-                        console.warn('DFX: email check failed:', e)
-                      }
+                      } catch {}
 
                       // Confirm the buy order with DFX
                       try {
@@ -938,9 +939,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                             }
                           }
                         )
-                      } catch (e: unknown) {
-                        console.warn('DFX: buy confirm failed:', e)
-                      }
+                      } catch {}
 
                       onLogEvent('Buy_Success', {
                         conversionValues: {
@@ -1004,6 +1003,20 @@ export const dfxRampPlugin: RampPluginFactory = (
                 }
 
                 const sellInfo = asDfxSellPaymentInfo(await sellResponse.json())
+
+                if (sellInfo.isValid === false) {
+                  const kycErrors = new Set([
+                    'LimitExceeded',
+                    'KycRequired',
+                    'KycDataRequired',
+                    'KycRequiredInstant'
+                  ])
+                  if (sellInfo.error != null && kycErrors.has(sellInfo.error)) {
+                    await handleKycRequired(coreWallet)
+                    return
+                  }
+                  throw new Error(`DFX: ${sellInfo.error ?? 'Unknown'}`)
+                }
 
                 const { multiplier } = getExchangeDenom(
                   coreWallet.currencyConfig,
@@ -1082,9 +1095,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                           body: JSON.stringify({ txHash: tx.txid })
                         }
                       )
-                    } catch (e: unknown) {
-                      console.warn('DFX: sell confirm failed:', e)
-                    }
+                    } catch {}
 
                     onLogEvent('Sell_Success', {
                       conversionValues: {

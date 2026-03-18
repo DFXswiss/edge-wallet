@@ -111,7 +111,9 @@ export type DfxBuyPaymentInfo = ReturnType<typeof asDfxBuyPaymentInfo>
 export const asDfxSellPaymentInfo = asObject({
   id: asNumber,
   depositAddress: asString,
-  amount: asNumber
+  amount: asNumber,
+  isValid: asOptional(asBoolean),
+  error: asOptional(asString)
 })
 export type DfxSellPaymentInfo = ReturnType<typeof asDfxSellPaymentInfo>
 
