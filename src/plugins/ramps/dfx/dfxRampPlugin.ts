@@ -685,12 +685,12 @@ export const dfxRampPlugin: RampPluginFactory = (
             continue
           }
 
-          const minFiat = dfxQuote.minVolume
-          const maxFiat = dfxQuote.maxVolume
+          const minSource = dfxQuote.minVolume
+          const maxSource = dfxQuote.maxVolume
 
           // Handle max amount requests
           if (isMaxAmount) {
-            exchangeAmount = maxFiat * 0.98
+            exchangeAmount = maxSource * 0.98
 
             const maxAmountLimit =
               maxAmountLimitString != null
@@ -700,11 +700,11 @@ export const dfxRampPlugin: RampPluginFactory = (
               exchangeAmount = Math.min(exchangeAmount, maxAmountLimit)
             }
 
-            if (exchangeAmount < minFiat) {
+            if (exchangeAmount < minSource) {
               throw new FiatProviderError({
                 providerId: pluginId,
                 errorType: 'underLimit',
-                errorAmount: minFiat,
+                errorAmount: minSource,
                 displayCurrencyCode: displayFiatCurrencyCode
               })
             }
@@ -725,44 +725,64 @@ export const dfxRampPlugin: RampPluginFactory = (
           }
 
           // Limit checks for non-max requests
+          // minVolume/maxVolume are in source currency (fiat for buy, crypto for sell)
           if (!isMaxAmount) {
-            const fiatToCheck =
-              request.amountType === 'fiat'
-                ? exchangeAmount
-                : dfxQuote.estimatedAmount
-            if (fiatToCheck > maxFiat) {
+            let sourceAmount: number
+            if (direction === 'buy') {
+              sourceAmount =
+                request.amountType === 'fiat'
+                  ? exchangeAmount
+                  : dfxQuote.amount ?? exchangeAmount
+            } else {
+              sourceAmount =
+                request.amountType === 'crypto'
+                  ? exchangeAmount
+                  : dfxQuote.amount ?? exchangeAmount
+            }
+            const limitDisplayCode =
+              direction === 'buy'
+                ? displayFiatCurrencyCode
+                : displayCurrencyCode
+            if (sourceAmount > maxSource) {
               throw new FiatProviderError({
                 providerId: pluginId,
                 errorType: 'overLimit',
-                errorAmount: maxFiat,
-                displayCurrencyCode: displayFiatCurrencyCode
+                errorAmount: maxSource,
+                displayCurrencyCode: limitDisplayCode
               })
             }
-            if (fiatToCheck < minFiat) {
+            if (sourceAmount < minSource) {
               throw new FiatProviderError({
                 providerId: pluginId,
                 errorType: 'underLimit',
-                errorAmount: minFiat,
-                displayCurrencyCode: displayFiatCurrencyCode
+                errorAmount: minSource,
+                displayCurrencyCode: limitDisplayCode
               })
             }
           }
 
           // Calculate amounts
+          // DFX API: `amount` = source currency, `estimatedAmount` = target asset
+          // Buy:  source = fiat,   target = crypto
+          // Sell: source = crypto, target = fiat
           let fiatAmount: string
           let cryptoAmount: string
 
-          if (direction === 'buy') {
+          if (request.amountType === 'fiat') {
+            // User entered fiat amount
             fiatAmount = exchangeAmount.toString()
             cryptoAmount = dfxQuote.estimatedAmount.toString()
+          } else if (direction === 'buy') {
+            // User entered crypto amount for buy
+            // amount = fiat needed, estimatedAmount = crypto confirmed
+            cryptoAmount = exchangeAmount.toString()
+            fiatAmount =
+              dfxQuote.amount?.toString() ?? exchangeAmount.toString()
           } else {
-            if (request.amountType === 'fiat') {
-              fiatAmount = exchangeAmount.toString()
-              cryptoAmount = dfxQuote.estimatedAmount.toString()
-            } else {
-              cryptoAmount = exchangeAmount.toString()
-              fiatAmount = dfxQuote.estimatedAmount.toString()
-            }
+            // User entered crypto amount for sell
+            // amount = crypto confirmed, estimatedAmount = fiat received
+            cryptoAmount = exchangeAmount.toString()
+            fiatAmount = dfxQuote.estimatedAmount.toString()
           }
 
           const quote: RampQuote = {
