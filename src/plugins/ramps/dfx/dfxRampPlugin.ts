@@ -725,8 +725,12 @@ export const dfxRampPlugin: RampPluginFactory = (
           }
 
           // Limit checks for non-max requests
-          if (!isMaxAmount && request.amountType === 'fiat') {
-            if (exchangeAmount > maxFiat) {
+          if (!isMaxAmount) {
+            const fiatToCheck =
+              request.amountType === 'fiat'
+                ? exchangeAmount
+                : dfxQuote.estimatedAmount
+            if (fiatToCheck > maxFiat) {
               throw new FiatProviderError({
                 providerId: pluginId,
                 errorType: 'overLimit',
@@ -734,7 +738,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                 displayCurrencyCode: displayFiatCurrencyCode
               })
             }
-            if (exchangeAmount < minFiat) {
+            if (fiatToCheck < minFiat) {
               throw new FiatProviderError({
                 providerId: pluginId,
                 errorType: 'underLimit',
