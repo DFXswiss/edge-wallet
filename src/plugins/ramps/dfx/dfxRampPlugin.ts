@@ -61,7 +61,7 @@ import {
   validateRampQuoteRequest
 } from '../utils/constraintUtils'
 import { getSettlementRange } from '../utils/getSettlementRange'
-import { openWebView } from '../utils/webViewUtils'
+import { openExternalWebView } from '../utils/webViewUtils'
 import {
   asDfxAssets,
   asDfxAuthResponse,
@@ -460,7 +460,8 @@ export const dfxRampPlugin: RampPluginFactory = (
   // -----------------------------------------------------------------------
 
   const handleKycRequired = async (
-    wallet: EdgeCurrencyWallet
+    wallet: EdgeCurrencyWallet,
+    direction: FiatDirection = 'buy'
   ): Promise<void> => {
     let token: string
     try {
@@ -469,10 +470,22 @@ export const dfxRampPlugin: RampPluginFactory = (
       showToast(lstrings.ramp_kyc_error_title, NOT_SUCCESS_TOAST_HIDE_MS)
       return
     }
-    await openWebView({
-      url: `${webAppUrl}/kyc?session=${token}`
+    const redirectUrl = encodeURIComponent(
+      `https://deep.edge.app/ramp/${direction}/${pluginId}`
+    )
+    await openExternalWebView({
+      url: `${webAppUrl}/kyc?session=${token}&kyc-redirect=${redirectUrl}`,
+      deeplink: {
+        direction,
+        providerId: pluginId,
+        handler: async _link => {
+          showToast(
+            lstrings.ramp_kyc_approved_message,
+            NOT_SUCCESS_TOAST_HIDE_MS
+          )
+        }
+      }
     })
-    showToast(lstrings.ramp_kyc_incomplete_message, NOT_SUCCESS_TOAST_HIDE_MS)
   }
 
   // -----------------------------------------------------------------------
@@ -659,7 +672,7 @@ export const dfxRampPlugin: RampPluginFactory = (
 
           if (quoteResponse == null) continue
           if (quoteResponse.status === 403) {
-            await handleKycRequired(request.wallet)
+            await handleKycRequired(request.wallet, direction)
             continue
           }
           if (!quoteResponse.ok) continue
@@ -668,7 +681,7 @@ export const dfxRampPlugin: RampPluginFactory = (
 
           // Check for KYC error
           if (dfxQuote.error?.toLowerCase().includes('kyc') === true) {
-            await handleKycRequired(request.wallet)
+            await handleKycRequired(request.wallet, direction)
             continue
           }
 
@@ -799,7 +812,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                 )
 
                 if (piResponse.status === 403) {
-                  await handleKycRequired(coreWallet)
+                  await handleKycRequired(coreWallet, 'buy')
                   return
                 }
                 if (!piResponse.ok) {
@@ -823,7 +836,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                     paymentInfo.error != null &&
                     kycErrors.has(paymentInfo.error)
                   ) {
-                    await handleKycRequired(coreWallet)
+                    await handleKycRequired(coreWallet, 'buy')
                     return
                   }
                   throw new Error(`DFX: ${paymentInfo.error ?? 'Unknown'}`)
@@ -992,7 +1005,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                 )
 
                 if (sellResponse.status === 403) {
-                  await handleKycRequired(coreWallet)
+                  await handleKycRequired(coreWallet, 'sell')
                   return
                 }
                 if (!sellResponse.ok) {
@@ -1012,7 +1025,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                     'KycRequiredInstant'
                   ])
                   if (sellInfo.error != null && kycErrors.has(sellInfo.error)) {
-                    await handleKycRequired(coreWallet)
+                    await handleKycRequired(coreWallet, 'sell')
                     return
                   }
                   throw new Error(`DFX: ${sellInfo.error ?? 'Unknown'}`)
