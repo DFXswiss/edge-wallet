@@ -660,8 +660,7 @@ export const dfxRampPlugin: RampPluginFactory = (
           if (request.amountType === 'fiat') {
             quoteBody.amount = exchangeAmount
           } else {
-            quoteBody.amount = exchangeAmount
-            quoteBody.targetAmount = true
+            quoteBody.targetAmount = exchangeAmount
           }
 
           const quoteResponse = await fetch(`${apiUrl}/${endpoint}`, {
