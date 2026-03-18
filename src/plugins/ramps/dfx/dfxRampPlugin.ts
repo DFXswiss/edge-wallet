@@ -955,7 +955,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                           orderId: paymentInfo.id.toString()
                         }
                       })
-                      navigation.goBack()
+                      navigation.pop()
                       resolve()
                     }
                   })
