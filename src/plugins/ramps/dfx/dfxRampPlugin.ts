@@ -15,7 +15,8 @@ import type { SendScene2Params } from '../../../components/scenes/SendScene2'
 import {
   Airship,
   showError,
-  showToast
+  showToast,
+  showToastSpinner
 } from '../../../components/services/AirshipInstance'
 import { lstrings } from '../../../locales/strings'
 import { getExchangeDenom } from '../../../selectors/DenominationSelectors'
@@ -202,8 +203,7 @@ export const dfxRampPlugin: RampPluginFactory = (
       return authCache.token
     }
 
-    const addresses = await wallet.getAddresses({ tokenId: null })
-    const address = addresses[0].publicAddress
+    const address = await getBestAddress(wallet)
     const message = buildAuthMessage(address)
 
     let signature: string
@@ -230,7 +230,7 @@ export const dfxRampPlugin: RampPluginFactory = (
       body: JSON.stringify({
         address,
         signature,
-        wallet: 'arkade'
+        wallet: 'edge'
       })
     })
 
@@ -403,6 +403,21 @@ export const dfxRampPlugin: RampPluginFactory = (
   const ensureIsoPrefix = (code: string): string =>
     code.startsWith('iso:') ? code : `iso:${code}`
 
+  // Prefer segwit/transparent addresses where available
+  const getBestAddress = async (
+    wallet: EdgeCurrencyWallet
+  ): Promise<string> => {
+    const addresses = await wallet.getAddresses({ tokenId: null })
+    const getPriority = (type: string | undefined): number => {
+      if (type === 'segwitAddress' || type === 'transparentAddress') return 1
+      return 2
+    }
+    addresses.sort(
+      (a, b) => getPriority(a.addressType) - getPriority(b.addressType)
+    )
+    return addresses[0].publicAddress
+  }
+
   const getSupportedPaymentMethods = (
     direction: FiatDirection,
     allowedCurrencyCodes: ProviderConfigCache['data']['allowedCurrencyCodes']
@@ -452,7 +467,7 @@ export const dfxRampPlugin: RampPluginFactory = (
       return
     }
     await openWebView({
-      url: `${webAppUrl}?session=${token}`
+      url: `${webAppUrl}/kyc?session=${token}`
     })
     showToast(lstrings.ramp_kyc_incomplete_message, NOT_SUCCESS_TOAST_HIDE_MS)
   }
@@ -755,10 +770,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                 // -----------------------------------------------------------
                 const token = await getDfxAuth(coreWallet)
 
-                const addresses = await coreWallet.getAddresses({
-                  tokenId: null
-                })
-                const receiveAddress = addresses[0].publicAddress
+                const receiveAddress = await getBestAddress(coreWallet)
 
                 const paymentInfoBody = {
                   currency: { id: fiatObj.id },
@@ -771,14 +783,17 @@ export const dfxRampPlugin: RampPluginFactory = (
                   targetAddress: receiveAddress
                 }
 
-                const piResponse = await fetch(`${apiUrl}/buy/paymentInfos`, {
-                  method: 'PUT',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`
-                  },
-                  body: JSON.stringify(paymentInfoBody)
-                })
+                const piResponse = await showToastSpinner(
+                  lstrings.fiat_plugin_finalizing_quote,
+                  fetch(`${apiUrl}/buy/paymentInfos`, {
+                    method: 'PUT',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      Authorization: `Bearer ${token}`
+                    },
+                    body: JSON.stringify(paymentInfoBody)
+                  })
+                )
 
                 if (piResponse.status === 403) {
                   await handleKycRequired(coreWallet)
@@ -795,8 +810,20 @@ export const dfxRampPlugin: RampPluginFactory = (
                 const paymentInfo = asDfxBuyPaymentInfo(piJson)
 
                 if (paymentInfo.isValid === false) {
-                  const errMsg = paymentInfo.error ?? 'Unknown'
-                  throw new Error(`DFX: ${errMsg}`)
+                  const kycErrors = new Set([
+                    'LimitExceeded',
+                    'KycRequired',
+                    'KycDataRequired',
+                    'KycRequiredInstant'
+                  ])
+                  if (
+                    paymentInfo.error != null &&
+                    kycErrors.has(paymentInfo.error)
+                  ) {
+                    await handleKycRequired(coreWallet)
+                    return
+                  }
+                  throw new Error(`DFX: ${paymentInfo.error ?? 'Unknown'}`)
                 }
 
                 const piCurrency =
@@ -873,7 +900,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                               })
                             )
                             if (email != null) {
-                              await fetch(
+                              const mailRes = await fetch(
                                 `${apiUrl.replace('/v1', '/v2')}/user/mail`,
                                 {
                                   method: 'PUT',
@@ -884,10 +911,21 @@ export const dfxRampPlugin: RampPluginFactory = (
                                   body: JSON.stringify({ mail: email })
                                 }
                               )
+                              if (!mailRes.ok) {
+                                const errBody = await mailRes
+                                  .json()
+                                  .catch(() => ({}))
+                                showError(
+                                  errBody.message ??
+                                    `Failed to set email: ${mailRes.status}`
+                                )
+                              }
                             }
                           }
                         }
-                      } catch {}
+                      } catch (e: unknown) {
+                        console.warn('DFX: email check failed:', e)
+                      }
 
                       // Confirm the buy order with DFX
                       try {
@@ -900,7 +938,9 @@ export const dfxRampPlugin: RampPluginFactory = (
                             }
                           }
                         )
-                      } catch {}
+                      } catch (e: unknown) {
+                        console.warn('DFX: buy confirm failed:', e)
+                      }
 
                       onLogEvent('Buy_Success', {
                         conversionValues: {
@@ -927,10 +967,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                 // -----------------------------------------------------------
                 const token = await getDfxAuth(coreWallet)
 
-                const addresses = await coreWallet.getAddresses({
-                  tokenId: null
-                })
-                const senderAddress = addresses[0].publicAddress
+                const senderAddress = await getBestAddress(coreWallet)
 
                 const sellBody = {
                   currency: { id: fiatObj.id },
@@ -960,8 +997,9 @@ export const dfxRampPlugin: RampPluginFactory = (
                   return
                 }
                 if (!sellResponse.ok) {
+                  const errBody = await sellResponse.text()
                   throw new Error(
-                    `DFX sell paymentInfos failed: ${sellResponse.status}`
+                    `DFX sell paymentInfos failed: ${sellResponse.status} ${errBody}`
                   )
                 }
 
@@ -1044,8 +1082,8 @@ export const dfxRampPlugin: RampPluginFactory = (
                           body: JSON.stringify({ txHash: tx.txid })
                         }
                       )
-                    } catch {
-                      // Non-critical: DFX will detect the tx anyway
+                    } catch (e: unknown) {
+                      console.warn('DFX: sell confirm failed:', e)
                     }
 
                     onLogEvent('Sell_Success', {
