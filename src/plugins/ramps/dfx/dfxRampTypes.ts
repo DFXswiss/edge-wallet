@@ -64,11 +64,6 @@ export const asDfxCountries = asArray(asDfxCountry)
 // Quote
 // ---------------------------------------------------------------------------
 
-export const asDfxQuoteError = asObject({
-  error: asOptional(asString),
-  message: asOptional(asString)
-})
-
 export const asDfxQuote = asObject({
   estimatedAmount: asNumber,
   amount: asOptional(asNumber),
