@@ -558,7 +558,7 @@ export const dfxRampPlugin: RampPluginFactory = (
           isFiatSupported(ensureIsoPrefix(fiatCurrencyCode), assetMap) == null
         )
           continue
-        return { supported: true }
+        return { supported: true, supportedAmountTypes: ['fiat', 'crypto'] }
       }
 
       return { supported: false }
@@ -681,10 +681,16 @@ export const dfxRampPlugin: RampPluginFactory = (
             exchangeAmount = parseFloat(exchangeAmountString)
           }
 
-          if (request.amountType === 'fiat') {
-            quoteBody.amount = exchangeAmount
+          // DFX API: amount = source currency, targetAmount = target currency
+          // Buy:  source = fiat,   target = crypto
+          // Sell: source = crypto, target = fiat
+          if (direction === 'buy') {
+            if (request.amountType === 'fiat') quoteBody.amount = exchangeAmount
+            else quoteBody.targetAmount = exchangeAmount
           } else {
-            quoteBody.targetAmount = exchangeAmount
+            if (request.amountType === 'crypto')
+              quoteBody.amount = exchangeAmount
+            else quoteBody.targetAmount = exchangeAmount
           }
 
           const quoteResponse = await fetch(`${apiUrl}/${endpoint}`, {
@@ -728,7 +734,10 @@ export const dfxRampPlugin: RampPluginFactory = (
                 providerId: pluginId,
                 errorType: 'underLimit',
                 errorAmount: minSource,
-                displayCurrencyCode: displayFiatCurrencyCode
+                displayCurrencyCode:
+                  direction === 'buy'
+                    ? displayFiatCurrencyCode
+                    : displayCurrencyCode
               })
             }
 
