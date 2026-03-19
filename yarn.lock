@@ -1287,6 +1287,14 @@
   resolved "https://registry.yarnpkg.com/@cosmjs/utils/-/utils-0.32.3.tgz#5dcaee6dd7cc846cdc073e9a7a7f63242f5f7e31"
   integrity sha512-WCZK4yksj2hBDz4w7xFZQTRZQ/RJhBX26uFHmmQFIcNUUVAihrLO+RerqJgk0dZqC42wstM9pEUQGtPmLcIYvg==
 
+"@dfx.swiss/core@^0.1.1-beta.0":
+  version "0.1.1-beta.0"
+  resolved "https://registry.yarnpkg.com/@dfx.swiss/core/-/core-0.1.1-beta.0.tgz#05b2f716ff91a2d8624228a2e37037c2e7ee5385"
+  integrity sha512-2Xrlk9M0FXeqEHui5SroK9GkZk3uSJpO63dMM8rL8L1K7RzcIHvXszHavymHk8Lvy6spN2Z2fgD8CcoVFKXFSw==
+  dependencies:
+    ibantools "^4.2.1"
+    libphonenumber-js "^1.10.39"
+
 "@discoveryjs/json-ext@^0.5.0":
   version "0.5.7"
   resolved "https://registry.yarnpkg.com/@discoveryjs/json-ext/-/json-ext-0.5.7.tgz#1d572bfbbe14b7704e0ba0f39b74815b84870d70"
@@ -11647,6 +11655,11 @@ husky@^7.0.0:
   resolved "https://registry.yarnpkg.com/husky/-/husky-7.0.2.tgz#21900da0f30199acca43a46c043c4ad84ae88dff"
   integrity sha512-8yKEWNX4z2YsofXAMT7KvA1g8p+GxtB1ffV8XtpAEGuXNAbCV5wdNKH+qTpw8SM9fh4aMPDR+yQuKfgnreyZlg==
 
+ibantools@^4.2.1:
+  version "4.5.1"
+  resolved "https://registry.yarnpkg.com/ibantools/-/ibantools-4.5.1.tgz#ad20d364f7d94c73e6c4fdf3ab2feb5f38974cd5"
+  integrity sha512-DfKQpLlFq9yEUIEnFuCJzss3XavD7iHZTU5PyqXiAJ+rmaMp+NFP3hboumHKuK8nZjuOJg93WemTzcQ5b9jOZA==
+
 iconv-lite@0.4.24:
   version "0.4.24"
   resolved "https://registry.yarnpkg.com/iconv-lite/-/iconv-lite-0.4.24.tgz#2022b4b25fbddc21d2f524974a474aafe733908b"
@@ -13091,6 +13104,11 @@ levn@^0.4.1:
   dependencies:
     prelude-ls "^1.2.1"
     type-check "~0.4.0"
+
+libphonenumber-js@^1.10.39:
+  version "1.12.40"
+  resolved "https://registry.yarnpkg.com/libphonenumber-js/-/libphonenumber-js-1.12.40.tgz#4b743571462a0f3fdafab7a941d89ee842aa25e0"
+  integrity sha512-HKGs7GowShNls3Zh+7DTr6wYpPk5jC78l508yQQY3e8ZgJChM3A9JZghmMJZuK+5bogSfuTafpjksGSR3aMIEg==
 
 libsodium-sumo@^0.7.13:
   version "0.7.13"

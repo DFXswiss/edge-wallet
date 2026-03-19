@@ -1,4 +1,15 @@
+import {
+  ApiException,
+  type Asset,
+  type Buy,
+  type Country,
+  DfxApiClient,
+  type Fiat,
+  FiatPaymentMethod,
+  type Sell
+} from '@dfx.swiss/core'
 import { mul } from 'biggystring'
+import { asBoolean, asNumber, asObject, asOptional, asString } from 'cleaners'
 import type {
   EdgeAssetAction,
   EdgeCurrencyWallet,
@@ -62,24 +73,48 @@ import {
 } from '../utils/constraintUtils'
 import { getSettlementRange } from '../utils/getSettlementRange'
 import { openExternalWebView } from '../utils/webViewUtils'
-import {
-  asDfxAssets,
-  asDfxAuthResponse,
-  asDfxBuyPaymentInfo,
-  asDfxCountries,
-  asDfxFiats,
-  asDfxQuote,
-  asDfxSellPaymentInfo,
-  asInitOptions,
-  type DfxAsset,
-  type DfxFiat,
-  type DfxPaymentMethod
-} from './dfxRampTypes'
+// ---------------------------------------------------------------------------
+// Init options
+// ---------------------------------------------------------------------------
+import { asInitOptions } from './dfxRampTypes'
 
 const pluginId = 'dfx'
 const partnerIcon = 'https://app.dfx.swiss/logo.png'
 const pluginDisplayName = 'DFX.swiss'
 const supportEmail = 'support@dfx.swiss'
+
+// ---------------------------------------------------------------------------
+// Runtime validators (cleaners) for API responses
+// ---------------------------------------------------------------------------
+
+const asDfxQuote = asObject({
+  estimatedAmount: asNumber,
+  amount: asOptional(asNumber),
+  minVolume: asNumber,
+  maxVolume: asNumber,
+  fees: asOptional(asObject({ rate: asNumber })),
+  isValid: asOptional(asBoolean),
+  error: asOptional(asString)
+})
+
+const asDfxBuyPaymentInfo = asObject({
+  id: asNumber,
+  iban: asOptional(asString),
+  bic: asOptional(asString),
+  remittanceInfo: asOptional(asString),
+  amount: asNumber,
+  currency: asOptional(asObject({ name: asString })),
+  isValid: asOptional(asBoolean),
+  error: asOptional(asString)
+})
+
+const asDfxSellPaymentInfo = asObject({
+  id: asNumber,
+  depositAddress: asString,
+  amount: asNumber,
+  isValid: asOptional(asBoolean),
+  error: asOptional(asString)
+})
 
 // ---------------------------------------------------------------------------
 // Blockchain mapping: DFX blockchain name → Edge pluginId
@@ -127,12 +162,14 @@ const DFX_NATIVE_COIN_NAMES: Record<string, string> = {
 const BLOCKED_COUNTRIES = new Set(['IR', 'KP', 'MM', 'US', 'IL'])
 
 // ---------------------------------------------------------------------------
-// Payment type mapping: DFX → Edge
+// Payment type mapping
 // ---------------------------------------------------------------------------
 
-const DFX_PAYMENT_TYPE_MAP: Record<DfxPaymentMethod, FiatPaymentType> = {
+const DFX_PAYMENT_TYPE_MAP: Record<string, FiatPaymentType> = {
   Bank: 'sepa'
 }
+
+type DfxPaymentMethod = 'Bank'
 
 // ---------------------------------------------------------------------------
 // Asset map type
@@ -140,7 +177,7 @@ const DFX_PAYMENT_TYPE_MAP: Record<DfxPaymentMethod, FiatPaymentType> = {
 
 interface AssetMap {
   providerId: string
-  fiat: Record<string, DfxFiat>
+  fiat: Record<string, Fiat>
   crypto: Record<string, ProviderToken[]>
 }
 
@@ -169,13 +206,6 @@ interface AuthCache {
 const AUTH_TTL = 15 * 60 * 1000
 
 // ---------------------------------------------------------------------------
-// Helper: build auth message per DFX spec
-// ---------------------------------------------------------------------------
-
-const buildAuthMessage = (address: string): string =>
-  `By_signing_this_message,_you_confirm_that_you_are_the_sole_owner_of_the_provided_Blockchain_address._Your_ID:_${address}`
-
-// ---------------------------------------------------------------------------
 // Plugin factory
 // ---------------------------------------------------------------------------
 
@@ -185,6 +215,8 @@ export const dfxRampPlugin: RampPluginFactory = (
   const { account, navigation, onLogEvent } = pluginConfig
   const initOptions = asInitOptions(pluginConfig.initOptions)
   const { apiUrl, webAppUrl } = initOptions
+
+  const client = new DfxApiClient({ apiUrl })
 
   let providerCache: ProviderConfigCache | null = null
   let authCache: AuthCache | null = null
@@ -204,7 +236,7 @@ export const dfxRampPlugin: RampPluginFactory = (
     }
 
     const address = await getBestAddress(wallet)
-    const message = buildAuthMessage(address)
+    const message = await client.auth.getSignMessage(address)
 
     let signature: string
     const evmChains = new Set([
@@ -224,22 +256,14 @@ export const dfxRampPlugin: RampPluginFactory = (
       })
     }
 
-    const response = await fetch(`${apiUrl}/auth`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        address,
-        signature,
-        wallet: 'edge'
-      })
+    const result = await client.auth.authenticate({
+      address,
+      signature,
+      wallet: 'edge'
     })
 
-    if (!response.ok) {
-      throw new Error(`DFX auth failed: ${response.status}`)
-    }
-
-    const result = asDfxAuthResponse(await response.json())
     authCache = { token: result.accessToken, timestamp: Date.now() }
+    client.setToken(result.accessToken)
     return result.accessToken
   }
 
@@ -270,95 +294,81 @@ export const dfxRampPlugin: RampPluginFactory = (
     }
 
     // Fetch all three endpoints in parallel
-    const dfxBlockchains = Object.keys(DFX_BLOCKCHAIN_MAP).join(',')
-    const [fiatsRes, assetsRes, countriesRes] = await Promise.all([
-      fetch(`${apiUrl}/fiat`).catch(() => undefined),
-      fetch(`${apiUrl}/asset?blockchains=${dfxBlockchains}`).catch(
-        () => undefined
-      ),
-      fetch(`${apiUrl}/country`).catch(() => undefined)
+    const dfxBlockchains = Object.keys(DFX_BLOCKCHAIN_MAP)
+    const [fiats, assets, countries] = await Promise.all([
+      client.fiat.list().catch(() => [] as Fiat[]),
+      client.asset
+        .list({ blockchains: dfxBlockchains as any[] })
+        .catch(() => [] as Asset[]),
+      client.country.list().catch(() => [] as Country[])
     ])
 
     // Process fiats
-    if (fiatsRes?.ok === true) {
-      const fiats = asDfxFiats(await fiatsRes.json())
-      for (const fiat of fiats) {
-        const isoCode = `iso:${fiat.name.toUpperCase()}`
+    for (const fiat of fiats) {
+      const isoCode = `iso:${fiat.name.toUpperCase()}`
 
-        for (const dir of ['buy', 'sell'] as FiatDirection[]) {
-          if (dir === 'buy' && !fiat.buyable) continue
-          if (dir === 'sell' && !fiat.sellable) continue
+      for (const dir of ['buy', 'sell'] as FiatDirection[]) {
+        if (dir === 'buy' && !fiat.buyable) continue
+        if (dir === 'sell' && !fiat.sellable) continue
 
-          for (const pt in freshConfig.allowedCurrencyCodes[dir]) {
-            const assetMap =
-              freshConfig.allowedCurrencyCodes[dir][pt as FiatPaymentType]
-            if (assetMap != null) {
-              assetMap.fiat[isoCode] = fiat
-            }
+        for (const pt in freshConfig.allowedCurrencyCodes[dir]) {
+          const assetMap =
+            freshConfig.allowedCurrencyCodes[dir][pt as FiatPaymentType]
+          if (assetMap != null) {
+            assetMap.fiat[isoCode] = fiat
           }
         }
       }
     }
 
     // Process crypto assets
-    if (assetsRes?.ok === true) {
-      const assets = asDfxAssets(await assetsRes.json())
-      for (const asset of assets) {
-        const edgePluginId = DFX_BLOCKCHAIN_MAP[asset.blockchain]
-        if (edgePluginId == null) continue
+    for (const asset of assets) {
+      const edgePluginId = DFX_BLOCKCHAIN_MAP[asset.blockchain]
+      if (edgePluginId == null) continue
 
-        let tokenId: EdgeTokenId
-        // DFX returns wrapped-token contract addresses even for native coins
-        // (e.g. WETH for ETH). Detect native coins by name match.
-        const nativeCoinName = DFX_NATIVE_COIN_NAMES[asset.blockchain]
+      let tokenId: EdgeTokenId
+      const nativeCoinName = DFX_NATIVE_COIN_NAMES[asset.blockchain]
 
-        if (asset.name === nativeCoinName) {
-          // Native coin for this blockchain
-          tokenId = null
-        } else if (asset.chainId != null) {
-          // Token with contract address
-          const resolved = findTokenIdByNetworkLocation({
-            account,
-            pluginId: edgePluginId,
-            networkLocation: { contractAddress: asset.chainId }
-          })
-          if (resolved === undefined) continue
-          tokenId = resolved
-        } else {
-          // No contract address and not native coin — skip
-          continue
-        }
+      if (asset.name === nativeCoinName) {
+        tokenId = null
+      } else if (asset.chainId != null) {
+        const resolved = findTokenIdByNetworkLocation({
+          account,
+          pluginId: edgePluginId,
+          networkLocation: { contractAddress: asset.chainId }
+        })
+        if (resolved === undefined) continue
+        tokenId = resolved
+      } else {
+        continue
+      }
 
-        for (const dir of ['buy', 'sell'] as FiatDirection[]) {
-          if (dir === 'buy' && !asset.buyable) continue
-          if (dir === 'sell' && !asset.sellable) continue
+      for (const dir of ['buy', 'sell'] as FiatDirection[]) {
+        if (dir === 'buy' && !asset.buyable) continue
+        if (dir === 'sell' && !asset.sellable) continue
 
-          for (const pt in freshConfig.allowedCurrencyCodes[dir]) {
-            const assetMap =
-              freshConfig.allowedCurrencyCodes[dir][pt as FiatPaymentType]
-            if (assetMap != null) {
-              assetMap.crypto[edgePluginId] ??= []
-              addTokenToArray(
-                { tokenId, otherInfo: asset },
-                assetMap.crypto[edgePluginId]
-              )
-            }
+        for (const pt in freshConfig.allowedCurrencyCodes[dir]) {
+          const assetMap =
+            freshConfig.allowedCurrencyCodes[dir][pt as FiatPaymentType]
+          if (assetMap != null) {
+            assetMap.crypto[edgePluginId] ??= []
+            addTokenToArray(
+              { tokenId, otherInfo: asset },
+              assetMap.crypto[edgePluginId]
+            )
           }
         }
       }
     }
 
     // Process countries
-    if (countriesRes?.ok === true) {
-      const countries = asDfxCountries(await countriesRes.json())
-      for (const country of countries) {
-        if (BLOCKED_COUNTRIES.has(country.symbol)) continue
-        if (country.locationAllowed !== true) continue
+    for (const country of countries) {
+      if (BLOCKED_COUNTRIES.has(country.symbol)) continue
+      if (!country.locationAllowed) continue
 
-        if (country.bankAllowed === true) {
-          addExactRegion(freshConfig.allowedCountryCodes.buy, country.symbol)
-          addExactRegion(freshConfig.allowedCountryCodes.sell, country.symbol)
-        }
+      if (country.bankAllowed) {
+        addExactRegion(freshConfig.allowedCountryCodes.buy, country.symbol)
+        addExactRegion(freshConfig.allowedCountryCodes.sell, country.symbol)
       }
     }
 
@@ -396,7 +406,7 @@ export const dfxRampPlugin: RampPluginFactory = (
   const isFiatSupported = (
     fiatCurrencyCode: string,
     assetMap: AssetMap
-  ): DfxFiat | null => {
+  ): Fiat | null => {
     return assetMap.fiat[fiatCurrencyCode] ?? null
   }
 
@@ -440,7 +450,6 @@ export const dfxRampPlugin: RampPluginFactory = (
       const assetMap = allowedCurrencyCodes[direction][paymentType]
       if (assetMap == null) continue
 
-      // Reverse lookup DFX payment method
       const dfxMethod = Object.entries(DFX_PAYMENT_TYPE_MAP).find(
         ([, v]) => v === paymentType
       )
@@ -583,7 +592,7 @@ export const dfxRampPlugin: RampPluginFactory = (
         dfxPaymentMethod: DfxPaymentMethod
         assetMap: AssetMap
         cryptoToken: ProviderToken
-        fiatObj: DfxFiat
+        fiatObj: Fiat
       }> = []
 
       for (const method of supportedMethods) {
@@ -625,16 +634,14 @@ export const dfxRampPlugin: RampPluginFactory = (
         const { paymentType, dfxPaymentMethod, cryptoToken, fiatObj } =
           candidate
         try {
-          const dfxAsset = cryptoToken.otherInfo as DfxAsset
+          const dfxAsset = cryptoToken.otherInfo as Asset
 
-          // Determine the DFX blockchain name for this asset
           const dfxBlockchain =
             EDGE_TO_DFX_BLOCKCHAIN[request.wallet.currencyInfo.pluginId]
           if (dfxBlockchain == null) continue
 
-          // Build quote request body — DFX API expects object references
-          const endpoint = direction === 'buy' ? 'buy/quote' : 'sell/quote'
-          const quoteBody: Record<string, unknown> = {
+          // Build quote request
+          const quoteInfo: any = {
             currency: { id: fiatObj.id },
             asset: { id: dfxAsset.id, blockchain: dfxAsset.blockchain },
             paymentMethod: dfxPaymentMethod
@@ -643,8 +650,6 @@ export const dfxRampPlugin: RampPluginFactory = (
           // Determine amount
           let exchangeAmount: number
           if (isMaxAmount) {
-            // For max, we'll request a quote with a high amount and use the
-            // returned maxVolume
             exchangeAmount = 999999
             const maxAmountLimit =
               maxAmountLimitString != null
@@ -658,25 +663,24 @@ export const dfxRampPlugin: RampPluginFactory = (
           }
 
           if (request.amountType === 'fiat') {
-            quoteBody.amount = exchangeAmount
+            quoteInfo.amount = exchangeAmount
           } else {
-            quoteBody.targetAmount = exchangeAmount
+            quoteInfo.targetAmount = exchangeAmount
           }
 
-          const quoteResponse = await fetch(`${apiUrl}/${endpoint}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(quoteBody)
-          }).catch(() => undefined)
-
-          if (quoteResponse == null) continue
-          if (quoteResponse.status === 403) {
-            await handleKycRequired(request.wallet, direction)
+          // Fetch quote via Core client
+          const quoteApi = direction === 'buy' ? client.buy : client.sell
+          let rawQuote: Buy | Sell
+          try {
+            rawQuote = await quoteApi.quote(quoteInfo)
+          } catch (e: unknown) {
+            if (e instanceof ApiException && e.statusCode === 403) {
+              await handleKycRequired(request.wallet, direction)
+              continue
+            }
             continue
           }
-          if (!quoteResponse.ok) continue
-
-          const dfxQuote = asDfxQuote(await quoteResponse.json())
+          const dfxQuote = asDfxQuote(rawQuote)
 
           // Check for KYC error
           if (dfxQuote.error?.toLowerCase().includes('kyc') === true) {
@@ -709,22 +713,18 @@ export const dfxRampPlugin: RampPluginFactory = (
             }
 
             // Re-fetch quote with correct amount
-            quoteBody.amount = exchangeAmount
-            delete quoteBody.targetAmount
-            const reQuoteResponse = await fetch(`${apiUrl}/${endpoint}`, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(quoteBody)
-            }).catch(() => undefined)
-
-            if (reQuoteResponse?.ok !== true) continue
-
-            const reQuote = asDfxQuote(await reQuoteResponse.json())
-            Object.assign(dfxQuote, reQuote)
+            quoteInfo.amount = exchangeAmount
+            delete quoteInfo.targetAmount
+            try {
+              const reRaw = await quoteApi.quote(quoteInfo)
+              const reQuote = asDfxQuote(reRaw)
+              Object.assign(dfxQuote, reQuote)
+            } catch {
+              continue
+            }
           }
 
           // Limit checks for non-max requests
-          // minVolume/maxVolume are in source currency (fiat for buy, crypto for sell)
           if (!isMaxAmount) {
             let sourceAmount: number
             if (direction === 'buy') {
@@ -761,25 +761,17 @@ export const dfxRampPlugin: RampPluginFactory = (
           }
 
           // Calculate amounts
-          // DFX API: `amount` = source currency, `estimatedAmount` = target asset
-          // Buy:  source = fiat,   target = crypto
-          // Sell: source = crypto, target = fiat
           let fiatAmount: string
           let cryptoAmount: string
 
           if (request.amountType === 'fiat') {
-            // User entered fiat amount
             fiatAmount = exchangeAmount.toString()
             cryptoAmount = dfxQuote.estimatedAmount.toString()
           } else if (direction === 'buy') {
-            // User entered crypto amount for buy
-            // amount = fiat needed, estimatedAmount = crypto confirmed
             cryptoAmount = exchangeAmount.toString()
             fiatAmount =
               dfxQuote.amount?.toString() ?? exchangeAmount.toString()
           } else {
-            // User entered crypto amount for sell
-            // amount = crypto confirmed, estimatedAmount = fiat received
             cryptoAmount = exchangeAmount.toString()
             fiatAmount = dfxQuote.estimatedAmount.toString()
           }
@@ -804,49 +796,35 @@ export const dfxRampPlugin: RampPluginFactory = (
               const { coreWallet } = approveParams
 
               if (direction === 'buy' && dfxPaymentMethod === 'Bank') {
-                // -----------------------------------------------------------
-                // BUY via SEPA — native InfoDisplayScene
-                // -----------------------------------------------------------
+                // ---------------------------------------------------------
+                // BUY via SEPA
+                // ---------------------------------------------------------
                 const token = await getDfxAuth(coreWallet)
+                client.setToken(token)
 
                 const receiveAddress = await getBestAddress(coreWallet)
 
-                const paymentInfoBody = {
-                  currency: { id: fiatObj.id },
-                  asset: {
-                    id: dfxAsset.id,
-                    blockchain: dfxAsset.blockchain
-                  },
-                  amount: parseFloat(fiatAmount),
-                  paymentMethod: 'Bank',
-                  targetAddress: receiveAddress
-                }
-
-                const piResponse = await showToastSpinner(
-                  lstrings.fiat_plugin_finalizing_quote,
-                  fetch(`${apiUrl}/buy/paymentInfos`, {
-                    method: 'PUT',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      Authorization: `Bearer ${token}`
-                    },
-                    body: JSON.stringify(paymentInfoBody)
-                  })
-                )
-
-                if (piResponse.status === 403) {
-                  await handleKycRequired(coreWallet, 'buy')
-                  return
-                }
-                if (!piResponse.ok) {
-                  const errBody = await piResponse.text()
-                  throw new Error(
-                    `DFX buy paymentInfos failed: ${piResponse.status} ${errBody}`
+                let piRaw: Buy
+                try {
+                  piRaw = await showToastSpinner(
+                    lstrings.fiat_plugin_finalizing_quote,
+                    client.buy.createPaymentInfo({
+                      currency: fiatObj,
+                      asset: dfxAsset,
+                      amount: parseFloat(fiatAmount),
+                      paymentMethod: FiatPaymentMethod.BANK,
+                      targetAddress: receiveAddress
+                    })
                   )
+                } catch (e: unknown) {
+                  if (e instanceof ApiException && e.statusCode === 403) {
+                    await handleKycRequired(coreWallet, 'buy')
+                    return
+                  }
+                  throw e
                 }
 
-                const piJson = await piResponse.json()
-                const paymentInfo = asDfxBuyPaymentInfo(piJson)
+                const paymentInfo = asDfxBuyPaymentInfo(piRaw)
 
                 if (paymentInfo.isValid === false) {
                   const kycErrors = new Set([
@@ -903,20 +881,10 @@ export const dfxRampPlugin: RampPluginFactory = (
                     onDone: async () => {
                       // Check if user has email registered
                       try {
-                        const userRes = await fetch(
-                          `${apiUrl.replace('/v1', '/v2')}/user`,
-                          {
-                            headers: {
-                              Authorization: `Bearer ${token}`
-                            }
-                          }
-                        )
-                        if (userRes.ok) {
-                          const user = await userRes.json()
-                          if (user.mail == null) {
-                            const email = await Airship.show<
-                              string | undefined
-                            >(bridge =>
+                        const user = await client.user.get()
+                        if (user.mail == null) {
+                          const email = await Airship.show<string | undefined>(
+                            bridge =>
                               React.createElement(TextInputModal, {
                                 bridge,
                                 title: lstrings.form_field_title_email_address,
@@ -937,44 +905,24 @@ export const dfxRampPlugin: RampPluginFactory = (
                                   return true
                                 }
                               })
-                            )
-                            if (email != null) {
-                              const mailRes = await fetch(
-                                `${apiUrl.replace('/v1', '/v2')}/user/mail`,
-                                {
-                                  method: 'PUT',
-                                  headers: {
-                                    'Content-Type': 'application/json',
-                                    Authorization: `Bearer ${token}`
-                                  },
-                                  body: JSON.stringify({ mail: email })
-                                }
-                              )
-                              if (!mailRes.ok) {
-                                const errBody = await mailRes
-                                  .json()
-                                  .catch(() => ({}))
-                                showError(
-                                  errBody.message ??
-                                    `Failed to set email: ${mailRes.status}`
-                                )
-                              }
+                          )
+                          if (email != null) {
+                            try {
+                              await client.user.updateMail({ mail: email })
+                            } catch (mailErr: unknown) {
+                              const msg =
+                                mailErr instanceof ApiException
+                                  ? mailErr.message
+                                  : `Failed to set email`
+                              showError(msg)
                             }
                           }
                         }
                       } catch {}
 
-                      // Confirm the buy order with DFX
+                      // Confirm the buy order
                       try {
-                        await fetch(
-                          `${apiUrl}/buy/paymentInfos/${paymentInfo.id}/confirm`,
-                          {
-                            method: 'PUT',
-                            headers: {
-                              Authorization: `Bearer ${token}`
-                            }
-                          }
-                        )
+                        await client.buy.confirm(paymentInfo.id)
                       } catch {}
 
                       onLogEvent('Buy_Success', {
@@ -997,48 +945,35 @@ export const dfxRampPlugin: RampPluginFactory = (
                   })
                 })
               } else if (direction === 'sell') {
-                // -----------------------------------------------------------
-                // SELL via SEPA — SendScene2
-                // -----------------------------------------------------------
+                // ---------------------------------------------------------
+                // SELL via SEPA
+                // ---------------------------------------------------------
                 const token = await getDfxAuth(coreWallet)
+                client.setToken(token)
 
                 const senderAddress = await getBestAddress(coreWallet)
 
-                const sellBody = {
-                  currency: { id: fiatObj.id },
-                  asset: {
-                    id: dfxAsset.id,
-                    blockchain: dfxAsset.blockchain
-                  },
-                  amount: parseFloat(cryptoAmount),
-                  paymentMethod: 'Bank',
-                  sourceAddress: senderAddress
-                }
-
-                const sellResponse = await fetch(
-                  `${apiUrl}/sell/paymentInfos?includeTx=true`,
-                  {
-                    method: 'PUT',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      Authorization: `Bearer ${token}`
+                let sellRaw: Sell
+                try {
+                  sellRaw = await client.sell.createPaymentInfo(
+                    {
+                      currency: fiatObj,
+                      asset: dfxAsset,
+                      amount: parseFloat(cryptoAmount),
+                      paymentMethod: FiatPaymentMethod.BANK,
+                      sourceAddress: senderAddress
                     },
-                    body: JSON.stringify(sellBody)
-                  }
-                )
-
-                if (sellResponse.status === 403) {
-                  await handleKycRequired(coreWallet, 'sell')
-                  return
-                }
-                if (!sellResponse.ok) {
-                  const errBody = await sellResponse.text()
-                  throw new Error(
-                    `DFX sell paymentInfos failed: ${sellResponse.status} ${errBody}`
+                    true
                   )
+                } catch (e: unknown) {
+                  if (e instanceof ApiException && e.statusCode === 403) {
+                    await handleKycRequired(coreWallet, 'sell')
+                    return
+                  }
+                  throw e
                 }
 
-                const sellInfo = asDfxSellPaymentInfo(await sellResponse.json())
+                const sellInfo = asDfxSellPaymentInfo(sellRaw)
 
                 if (sellInfo.isValid === false) {
                   const kycErrors = new Set([
@@ -1120,17 +1055,9 @@ export const dfxRampPlugin: RampPluginFactory = (
 
                     // Confirm TX hash with DFX
                     try {
-                      await fetch(
-                        `${apiUrl}/sell/paymentInfos/${sellInfo.id}/confirm`,
-                        {
-                          method: 'PUT',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            Authorization: `Bearer ${token}`
-                          },
-                          body: JSON.stringify({ txHash: tx.txid })
-                        }
-                      )
+                      await client.sell.confirm(sellInfo.id, {
+                        txHash: tx.txid
+                      })
                     } catch {}
 
                     onLogEvent('Sell_Success', {
