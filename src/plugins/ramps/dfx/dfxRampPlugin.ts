@@ -245,7 +245,7 @@ export const dfxRampPlugin: RampPluginFactory = (
       })
     }
 
-    const response = await fetch(`${apiUrl}/auth`, {
+    const response = await fetch(`${apiUrl}/v1/auth`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -296,11 +296,11 @@ export const dfxRampPlugin: RampPluginFactory = (
     // Fetch all three endpoints in parallel
     const dfxBlockchains = Object.keys(DFX_BLOCKCHAIN_MAP).join(',')
     const [fiatsRes, assetsRes, countriesRes] = await Promise.all([
-      fetch(`${apiUrl}/fiat`).catch(() => undefined),
-      fetch(`${apiUrl}/asset?blockchains=${dfxBlockchains}`).catch(
+      fetch(`${apiUrl}/v1/fiat`).catch(() => undefined),
+      fetch(`${apiUrl}/v1/asset?blockchains=${dfxBlockchains}`).catch(
         () => undefined
       ),
-      fetch(`${apiUrl}/country`).catch(() => undefined)
+      fetch(`${apiUrl}/v1/country`).catch(() => undefined)
     ])
 
     // Process fiats
@@ -693,7 +693,7 @@ export const dfxRampPlugin: RampPluginFactory = (
             else quoteBody.targetAmount = exchangeAmount
           }
 
-          const quoteResponse = await fetch(`${apiUrl}/${endpoint}`, {
+          const quoteResponse = await fetch(`${apiUrl}/v1/${endpoint}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(quoteBody)
@@ -744,7 +744,7 @@ export const dfxRampPlugin: RampPluginFactory = (
             // Re-fetch quote with correct amount
             quoteBody.amount = exchangeAmount
             quoteBody.targetAmount = undefined
-            const reQuoteResponse = await fetch(`${apiUrl}/${endpoint}`, {
+            const reQuoteResponse = await fetch(`${apiUrl}/v1/${endpoint}`, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(quoteBody)
@@ -863,7 +863,7 @@ export const dfxRampPlugin: RampPluginFactory = (
 
                 const piResponse = await showToastSpinner(
                   lstrings.fiat_plugin_finalizing_quote,
-                  fetch(`${apiUrl}/buy/paymentInfos`, {
+                  fetch(`${apiUrl}/v1/buy/paymentInfos`, {
                     method: 'PUT',
                     headers: {
                       'Content-Type': 'application/json',
@@ -942,14 +942,11 @@ export const dfxRampPlugin: RampPluginFactory = (
                     onDone: async () => {
                       // Check if user has email registered
                       try {
-                        const userRes = await fetch(
-                          `${apiUrl.replace('/v1', '/v2')}/user`,
-                          {
-                            headers: {
-                              Authorization: `Bearer ${token}`
-                            }
+                        const userRes = await fetch(`${apiUrl}/v2/user`, {
+                          headers: {
+                            Authorization: `Bearer ${token}`
                           }
-                        )
+                        })
                         if (userRes.ok) {
                           const user = await userRes.json()
                           if (user.mail == null) {
@@ -979,7 +976,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                             )
                             if (email != null) {
                               const mailRes = await fetch(
-                                `${apiUrl.replace('/v1', '/v2')}/user/mail`,
+                                `${apiUrl}/v2/user/mail`,
                                 {
                                   method: 'PUT',
                                   headers: {
@@ -1008,7 +1005,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                       // Confirm the buy order with DFX
                       try {
                         await fetch(
-                          `${apiUrl}/buy/paymentInfos/${paymentInfo.id}/confirm`,
+                          `${apiUrl}/v1/buy/paymentInfos/${paymentInfo.id}/confirm`,
                           {
                             method: 'PUT',
                             headers: {
@@ -1059,7 +1056,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                 }
 
                 const sellResponse = await fetch(
-                  `${apiUrl}/sell/paymentInfos?includeTx=true`,
+                  `${apiUrl}/v1/sell/paymentInfos?includeTx=true`,
                   {
                     method: 'PUT',
                     headers: {
@@ -1164,7 +1161,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                     // Confirm TX hash with DFX
                     try {
                       await fetch(
-                        `${apiUrl}/sell/paymentInfos/${sellInfo.id}/confirm`,
+                        `${apiUrl}/v1/sell/paymentInfos/${sellInfo.id}/confirm`,
                         {
                           method: 'PUT',
                           headers: {
