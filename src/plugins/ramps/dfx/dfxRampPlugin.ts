@@ -126,6 +126,25 @@ const DFX_NATIVE_COIN_NAMES: Record<string, string> = {
 // Countries where DFX is not available
 const BLOCKED_COUNTRIES = new Set(['IR', 'KP', 'MM', 'US', 'IL'])
 
+// Format settlement range as "min - max" days string for display
+const formatSettlementDays = (
+  range: ReturnType<typeof getSettlementRange>
+): string => {
+  const min = range.min.unit === 'days' ? range.min.value : 0
+  const max = range.max.unit === 'days' ? range.max.value : 1
+  return `${min} - ${max}`
+}
+
+// EVM chains that require hex-encoded message for signing
+const EVM_CHAINS = new Set([
+  'ethereum',
+  'arbitrum',
+  'optimism',
+  'polygon',
+  'base',
+  'binancesmartchain'
+])
+
 // ---------------------------------------------------------------------------
 // Payment type mapping: DFX → Edge
 // ---------------------------------------------------------------------------
@@ -142,6 +161,14 @@ interface AssetMap {
   providerId: string
   fiat: Record<string, DfxFiat>
   crypto: Record<string, ProviderToken[]>
+}
+
+interface DfxQuoteBody {
+  currency: { id: number }
+  asset: { id: number; blockchain: string }
+  paymentMethod: DfxPaymentMethod
+  amount?: number
+  targetAmount?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +214,7 @@ export const dfxRampPlugin: RampPluginFactory = (
   const { apiUrl, webAppUrl } = initOptions
 
   let providerCache: ProviderConfigCache | null = null
-  let authCache: AuthCache | null = null
+  const authCacheMap = new Map<string, AuthCache>()
 
   const rampInfo: RampInfo = {
     partnerIcon,
@@ -199,23 +226,17 @@ export const dfxRampPlugin: RampPluginFactory = (
   // -----------------------------------------------------------------------
 
   const getDfxAuth = async (wallet: EdgeCurrencyWallet): Promise<string> => {
-    if (authCache != null && Date.now() - authCache.timestamp < AUTH_TTL) {
-      return authCache.token
+    const address = await getBestAddress(wallet)
+
+    const cached = authCacheMap.get(address)
+    if (cached != null && Date.now() - cached.timestamp < AUTH_TTL) {
+      return cached.token
     }
 
-    const address = await getBestAddress(wallet)
     const message = buildAuthMessage(address)
 
     let signature: string
-    const evmChains = new Set([
-      'ethereum',
-      'arbitrum',
-      'optimism',
-      'polygon',
-      'base',
-      'binancesmartchain'
-    ])
-    if (evmChains.has(wallet.currencyInfo.pluginId)) {
+    if (EVM_CHAINS.has(wallet.currencyInfo.pluginId)) {
       const hexMessage = Buffer.from(message, 'utf8').toString('hex')
       signature = await wallet.signMessage(hexMessage)
     } else {
@@ -239,7 +260,10 @@ export const dfxRampPlugin: RampPluginFactory = (
     }
 
     const result = asDfxAuthResponse(await response.json())
-    authCache = { token: result.accessToken, timestamp: Date.now() }
+    authCacheMap.set(address, {
+      token: result.accessToken,
+      timestamp: Date.now()
+    })
     return result.accessToken
   }
 
@@ -634,7 +658,7 @@ export const dfxRampPlugin: RampPluginFactory = (
 
           // Build quote request body — DFX API expects object references
           const endpoint = direction === 'buy' ? 'buy/quote' : 'sell/quote'
-          const quoteBody: Record<string, unknown> = {
+          const quoteBody: DfxQuoteBody = {
             currency: { id: fiatObj.id },
             asset: { id: dfxAsset.id, blockchain: dfxAsset.blockchain },
             paymentMethod: dfxPaymentMethod
@@ -710,7 +734,7 @@ export const dfxRampPlugin: RampPluginFactory = (
 
             // Re-fetch quote with correct amount
             quoteBody.amount = exchangeAmount
-            delete quoteBody.targetAmount
+            quoteBody.targetAmount = undefined
             const reQuoteResponse = await fetch(`${apiUrl}/${endpoint}`, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
@@ -784,6 +808,12 @@ export const dfxRampPlugin: RampPluginFactory = (
             fiatAmount = dfxQuote.estimatedAmount.toString()
           }
 
+          const settlementRange = getSettlementRange(
+            paymentType,
+            request.direction
+          )
+          const settlementDays = formatSettlementDays(settlementRange)
+
           const quote: RampQuote = {
             pluginId,
             partnerIcon,
@@ -797,7 +827,7 @@ export const dfxRampPlugin: RampPluginFactory = (
             expirationDate: new Date(Date.now() + 60000),
             regionCode,
             paymentType,
-            settlementRange: getSettlementRange(paymentType, request.direction),
+            settlementRange,
             approveQuote: async (
               approveParams: RampApproveQuoteParams
             ): Promise<void> => {
@@ -897,7 +927,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                       displayCurrencyCode,
                       fiatAmount,
                       displayFiatCurrencyCode,
-                      '1-2'
+                      settlementDays
                     ),
                     transferInfo,
                     onDone: async () => {
@@ -962,7 +992,9 @@ export const dfxRampPlugin: RampPluginFactory = (
                             }
                           }
                         }
-                      } catch {}
+                      } catch (e: unknown) {
+                        showError(e)
+                      }
 
                       // Confirm the buy order with DFX
                       try {
@@ -975,7 +1007,9 @@ export const dfxRampPlugin: RampPluginFactory = (
                             }
                           }
                         )
-                      } catch {}
+                      } catch (e: unknown) {
+                        showError(e)
+                      }
 
                       onLogEvent('Buy_Success', {
                         conversionValues: {
@@ -1131,7 +1165,9 @@ export const dfxRampPlugin: RampPluginFactory = (
                           body: JSON.stringify({ txHash: tx.txid })
                         }
                       )
-                    } catch {}
+                    } catch (e: unknown) {
+                      showError(e)
+                    }
 
                     onLogEvent('Sell_Success', {
                       conversionValues: {
@@ -1169,7 +1205,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                         displayCurrencyCode,
                         fiatAmount,
                         displayFiatCurrencyCode,
-                        '1-2'
+                        settlementDays
                       ) +
                       '\n\n' +
                       sprintf(
