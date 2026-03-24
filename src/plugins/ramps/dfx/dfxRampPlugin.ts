@@ -1043,245 +1043,242 @@ export const dfxRampPlugin: RampPluginFactory = (
                 // SELL via SEPA — SendScene2
                 // -----------------------------------------------------------
 
-                // Collect user's SEPA bank details
-                const sepaInfo = await new Promise<SepaInfo | undefined>(
-                  resolve => {
-                    navigation.navigate('guiPluginSepaForm', {
-                      headerTitle: lstrings.sepa_form_title,
-                      doneLabel: lstrings.string_next_capitalized,
-                      onDone: async (info: SepaInfo) => {
-                        resolve(info)
+                // Collect user's SEPA bank details and process sell
+                navigation.navigate('guiPluginSepaForm', {
+                  headerTitle: lstrings.sepa_form_title,
+                  doneLabel: lstrings.string_next_capitalized,
+                  onDone: async (sepaInfo: SepaInfo) => {
+                    const token = await getDfxAuth(coreWallet)
+
+                    const senderAddress = await getBestAddress(coreWallet)
+
+                    const sellBody = {
+                      currency: { id: fiatObj.id },
+                      asset: {
+                        id: dfxAsset.id,
+                        blockchain: dfxAsset.blockchain
                       },
-                      onClose: () => {
-                        resolve(undefined)
-                      }
-                    })
-                  }
-                )
-
-                if (sepaInfo == null) return // User cancelled
-
-                // Pop the SEPA form before continuing
-                navigation.pop()
-
-                const token = await getDfxAuth(coreWallet)
-
-                const senderAddress = await getBestAddress(coreWallet)
-
-                const sellBody = {
-                  currency: { id: fiatObj.id },
-                  asset: {
-                    id: dfxAsset.id,
-                    blockchain: dfxAsset.blockchain
-                  },
-                  amount: parseFloat(cryptoAmount),
-                  paymentMethod: 'Bank',
-                  sourceAddress: senderAddress,
-                  iban: sepaInfo.iban
-                }
-
-                const sellResponse = await fetch(
-                  `${apiUrl}/v1/sell/paymentInfos?includeTx=true`,
-                  {
-                    method: 'PUT',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      Authorization: `Bearer ${token}`
-                    },
-                    body: JSON.stringify(sellBody)
-                  }
-                )
-
-                if (sellResponse.status === 403) {
-                  await handleKycRequired(coreWallet, 'sell')
-                  return
-                }
-                if (!sellResponse.ok) {
-                  const errBody = await sellResponse.text()
-                  throw new Error(
-                    `DFX sell paymentInfos failed: ${sellResponse.status} ${errBody}`
-                  )
-                }
-
-                const sellInfo = asDfxSellPaymentInfo(await sellResponse.json())
-
-                if (sellInfo.isValid === false) {
-                  const kycErrors = new Set([
-                    'LimitExceeded',
-                    'KycRequired',
-                    'KycDataRequired',
-                    'KycRequiredInstant'
-                  ])
-                  if (sellInfo.error != null && kycErrors.has(sellInfo.error)) {
-                    await handleKycRequired(coreWallet, 'sell')
-                    return
-                  }
-                  throw new Error(`DFX: ${sellInfo.error ?? 'Unknown'}`)
-                }
-
-                const { multiplier } = getExchangeDenom(
-                  coreWallet.currencyConfig,
-                  tokenId
-                )
-                const nativeAmount = mul(sellInfo.amount.toString(), multiplier)
-
-                const assetAction: EdgeAssetAction = {
-                  assetActionType: 'sell'
-                }
-                const savedAction: EdgeTxActionFiat = {
-                  actionType: 'fiat',
-                  orderId: sellInfo.id.toString(),
-                  orderUri: `${webAppUrl}/tx/${sellInfo.id}`,
-                  isEstimate: true,
-                  fiatPlugin: {
-                    providerId: pluginId,
-                    providerDisplayName: pluginDisplayName,
-                    supportEmail
-                  },
-                  payinAddress: sellInfo.depositAddress,
-                  cryptoAsset: {
-                    pluginId: coreWallet.currencyInfo.pluginId,
-                    tokenId,
-                    nativeAmount
-                  },
-                  fiatAsset: {
-                    fiatCurrencyCode,
-                    fiatAmount
-                  }
-                }
-
-                const spendInfo: EdgeSpendInfo = {
-                  tokenId,
-                  assetAction,
-                  savedAction,
-                  spendTargets: [
-                    {
-                      nativeAmount,
-                      publicAddress: sellInfo.depositAddress
-                    }
-                  ]
-                }
-
-                const sendParams: SendScene2Params = {
-                  walletId: coreWallet.id,
-                  tokenId,
-                  spendInfo,
-                  dismissAlert: true,
-                  lockTilesMap: {
-                    address: true,
-                    amount: true,
-                    wallet: true
-                  },
-                  hiddenFeaturesMap: {
-                    address: true
-                  },
-                  onDone: async (error, tx): Promise<void> => {
-                    if (error != null) {
-                      throw error
-                    }
-                    if (tx == null) {
-                      throw new Error(SendErrorNoTransaction)
+                      amount: parseFloat(cryptoAmount),
+                      paymentMethod: 'Bank',
+                      sourceAddress: senderAddress,
+                      iban: sepaInfo.iban
                     }
 
-                    // Confirm TX hash with DFX
-                    try {
-                      await fetch(
-                        `${apiUrl}/v1/sell/paymentInfos/${sellInfo.id}/confirm`,
-                        {
-                          method: 'PUT',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            Authorization: `Bearer ${token}`
-                          },
-                          body: JSON.stringify({ txHash: tx.txid })
-                        }
-                      )
-                    } catch (e: unknown) {
-                      showError(e)
-                    }
-
-                    onLogEvent('Sell_Success', {
-                      conversionValues: {
-                        conversionType: 'sell',
-                        destFiatCurrencyCode: fiatCurrencyCode,
-                        destFiatAmount: fiatAmount,
-                        sourceAmount: new CryptoAmount({
-                          currencyConfig: coreWallet.currencyConfig,
-                          tokenId,
-                          exchangeAmount: cryptoAmount
-                        }),
-                        fiatProviderId: pluginId,
-                        orderId: sellInfo.id.toString()
-                      }
-                    })
-
-                    if (tokenId != null) {
-                      await coreWallet.saveTxAction({
-                        txid: tx.txid,
-                        tokenId,
-                        assetAction: {
-                          ...assetAction,
-                          assetActionType: 'sell'
+                    const sellResponse = await fetch(
+                      `${apiUrl}/v1/sell/paymentInfos?includeTx=true`,
+                      {
+                        method: 'PUT',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          Authorization: `Bearer ${token}`
                         },
-                        savedAction
-                      })
+                        body: JSON.stringify(sellBody)
+                      }
+                    )
+
+                    if (sellResponse.status === 403) {
+                      await handleKycRequired(coreWallet, 'sell')
+                      return
+                    }
+                    if (!sellResponse.ok) {
+                      const errBody = await sellResponse.text()
+                      throw new Error(
+                        `DFX sell paymentInfos failed: ${sellResponse.status} ${errBody}`
+                      )
                     }
 
-                    navigation.pop()
-
-                    const message =
-                      sprintf(
-                        lstrings.fiat_plugin_sell_complete_message_s,
-                        cryptoAmount,
-                        displayCurrencyCode,
-                        fiatAmount,
-                        displayFiatCurrencyCode,
-                        settlementDays
-                      ) +
-                      '\n\n' +
-                      sprintf(
-                        lstrings.fiat_plugin_sell_complete_message_2_hour_s,
-                        '24'
-                      ) +
-                      '\n\n' +
-                      lstrings.fiat_plugin_sell_complete_message_3
-
-                    await showButtonsModal({
-                      buttons: {
-                        ok: {
-                          label: lstrings.string_ok,
-                          type: 'primary'
-                        }
-                      },
-                      title: lstrings.fiat_plugin_sell_complete_title,
-                      message
-                    })
-                  },
-                  onBack: () => {
-                    // User backed out of send
-                  }
-                }
-
-                try {
-                  navigation.navigate('send2', sendParams)
-                } catch (e: unknown) {
-                  if (
-                    e instanceof Error &&
-                    e.message === SendErrorBackPressed
-                  ) {
-                    // User pressed back
-                  } else if (
-                    e instanceof Error &&
-                    e.message === SendErrorNoTransaction
-                  ) {
-                    showToast(
-                      lstrings.fiat_plugin_sell_failed_to_send_try_again,
-                      NOT_SUCCESS_TOAST_HIDE_MS
+                    const sellInfo = asDfxSellPaymentInfo(
+                      await sellResponse.json()
                     )
-                  } else {
-                    showError(e)
+
+                    if (sellInfo.isValid === false) {
+                      const kycErrors = new Set([
+                        'LimitExceeded',
+                        'KycRequired',
+                        'KycDataRequired',
+                        'KycRequiredInstant'
+                      ])
+                      if (
+                        sellInfo.error != null &&
+                        kycErrors.has(sellInfo.error)
+                      ) {
+                        await handleKycRequired(coreWallet, 'sell')
+                        return
+                      }
+                      throw new Error(`DFX: ${sellInfo.error ?? 'Unknown'}`)
+                    }
+
+                    const { multiplier } = getExchangeDenom(
+                      coreWallet.currencyConfig,
+                      tokenId
+                    )
+                    const nativeAmount = mul(
+                      sellInfo.amount.toString(),
+                      multiplier
+                    )
+
+                    const assetAction: EdgeAssetAction = {
+                      assetActionType: 'sell'
+                    }
+                    const savedAction: EdgeTxActionFiat = {
+                      actionType: 'fiat',
+                      orderId: sellInfo.id.toString(),
+                      orderUri: `${webAppUrl}/tx/${sellInfo.id}`,
+                      isEstimate: true,
+                      fiatPlugin: {
+                        providerId: pluginId,
+                        providerDisplayName: pluginDisplayName,
+                        supportEmail
+                      },
+                      payinAddress: sellInfo.depositAddress,
+                      cryptoAsset: {
+                        pluginId: coreWallet.currencyInfo.pluginId,
+                        tokenId,
+                        nativeAmount
+                      },
+                      fiatAsset: {
+                        fiatCurrencyCode,
+                        fiatAmount
+                      }
+                    }
+
+                    const spendInfo: EdgeSpendInfo = {
+                      tokenId,
+                      assetAction,
+                      savedAction,
+                      spendTargets: [
+                        {
+                          nativeAmount,
+                          publicAddress: sellInfo.depositAddress
+                        }
+                      ]
+                    }
+
+                    const sendParams: SendScene2Params = {
+                      walletId: coreWallet.id,
+                      tokenId,
+                      spendInfo,
+                      dismissAlert: true,
+                      lockTilesMap: {
+                        address: true,
+                        amount: true,
+                        wallet: true
+                      },
+                      hiddenFeaturesMap: {
+                        address: true
+                      },
+                      onDone: async (error, tx): Promise<void> => {
+                        if (error != null) {
+                          throw error
+                        }
+                        if (tx == null) {
+                          throw new Error(SendErrorNoTransaction)
+                        }
+
+                        // Confirm TX hash with DFX
+                        try {
+                          await fetch(
+                            `${apiUrl}/v1/sell/paymentInfos/${sellInfo.id}/confirm`,
+                            {
+                              method: 'PUT',
+                              headers: {
+                                'Content-Type': 'application/json',
+                                Authorization: `Bearer ${token}`
+                              },
+                              body: JSON.stringify({ txHash: tx.txid })
+                            }
+                          )
+                        } catch (e: unknown) {
+                          showError(e)
+                        }
+
+                        onLogEvent('Sell_Success', {
+                          conversionValues: {
+                            conversionType: 'sell',
+                            destFiatCurrencyCode: fiatCurrencyCode,
+                            destFiatAmount: fiatAmount,
+                            sourceAmount: new CryptoAmount({
+                              currencyConfig: coreWallet.currencyConfig,
+                              tokenId,
+                              exchangeAmount: cryptoAmount
+                            }),
+                            fiatProviderId: pluginId,
+                            orderId: sellInfo.id.toString()
+                          }
+                        })
+
+                        if (tokenId != null) {
+                          await coreWallet.saveTxAction({
+                            txid: tx.txid,
+                            tokenId,
+                            assetAction: {
+                              ...assetAction,
+                              assetActionType: 'sell'
+                            },
+                            savedAction
+                          })
+                        }
+
+                        navigation.pop()
+
+                        const message =
+                          sprintf(
+                            lstrings.fiat_plugin_sell_complete_message_s,
+                            cryptoAmount,
+                            displayCurrencyCode,
+                            fiatAmount,
+                            displayFiatCurrencyCode,
+                            settlementDays
+                          ) +
+                          '\n\n' +
+                          sprintf(
+                            lstrings.fiat_plugin_sell_complete_message_2_hour_s,
+                            '24'
+                          ) +
+                          '\n\n' +
+                          lstrings.fiat_plugin_sell_complete_message_3
+
+                        await showButtonsModal({
+                          buttons: {
+                            ok: {
+                              label: lstrings.string_ok,
+                              type: 'primary'
+                            }
+                          },
+                          title: lstrings.fiat_plugin_sell_complete_title,
+                          message
+                        })
+                      },
+                      onBack: () => {
+                        // User backed out of send
+                      }
+                    }
+
+                    try {
+                      navigation.navigate('send2', sendParams)
+                    } catch (e: unknown) {
+                      if (
+                        e instanceof Error &&
+                        e.message === SendErrorBackPressed
+                      ) {
+                        // User pressed back
+                      } else if (
+                        e instanceof Error &&
+                        e.message === SendErrorNoTransaction
+                      ) {
+                        showToast(
+                          lstrings.fiat_plugin_sell_failed_to_send_try_again,
+                          NOT_SUCCESS_TOAST_HIDE_MS
+                        )
+                      } else {
+                        showError(e)
+                      }
+                    }
+                  },
+                  onClose: () => {
+                    // User cancelled
                   }
-                }
+                })
               }
             },
             closeQuote: async (): Promise<void> => {}
