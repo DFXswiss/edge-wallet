@@ -20,6 +20,7 @@ import {
 } from '../../../components/services/AirshipInstance'
 import { lstrings } from '../../../locales/strings'
 import { getExchangeDenom } from '../../../selectors/DenominationSelectors'
+import type { SepaInfo } from '../../../types/FormTypes'
 import type { StringMap } from '../../../types/types'
 import { CryptoAmount } from '../../../util/CryptoAmount'
 import { findTokenIdByNetworkLocation } from '../../../util/CurrencyInfoHelpers'
@@ -1041,6 +1042,28 @@ export const dfxRampPlugin: RampPluginFactory = (
                 // -----------------------------------------------------------
                 // SELL via SEPA — SendScene2
                 // -----------------------------------------------------------
+
+                // Collect user's SEPA bank details
+                const sepaInfo = await new Promise<SepaInfo | undefined>(
+                  resolve => {
+                    navigation.navigate('guiPluginSepaForm', {
+                      headerTitle: lstrings.sepa_form_title,
+                      doneLabel: lstrings.string_next_capitalized,
+                      onDone: async (info: SepaInfo) => {
+                        resolve(info)
+                      },
+                      onClose: () => {
+                        resolve(undefined)
+                      }
+                    })
+                  }
+                )
+
+                if (sepaInfo == null) return // User cancelled
+
+                // Pop the SEPA form before continuing
+                navigation.pop()
+
                 const token = await getDfxAuth(coreWallet)
 
                 const senderAddress = await getBestAddress(coreWallet)
@@ -1053,7 +1076,8 @@ export const dfxRampPlugin: RampPluginFactory = (
                   },
                   amount: parseFloat(cryptoAmount),
                   paymentMethod: 'Bank',
-                  sourceAddress: senderAddress
+                  sourceAddress: senderAddress,
+                  iban: sepaInfo.iban
                 }
 
                 const sellResponse = await fetch(
