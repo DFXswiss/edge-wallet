@@ -800,21 +800,22 @@ export const dfxRampPlugin: RampPluginFactory = (
           let fiatAmount: string
           let cryptoAmount: string
 
-          if (request.amountType === 'fiat') {
-            // User entered fiat amount
-            fiatAmount = exchangeAmount.toString()
-            cryptoAmount = dfxQuote.estimatedAmount.toString()
-          } else if (direction === 'buy') {
-            // User entered crypto amount for buy
-            // amount = fiat needed, estimatedAmount = crypto confirmed
-            cryptoAmount = exchangeAmount.toString()
-            fiatAmount =
-              dfxQuote.amount?.toString() ?? exchangeAmount.toString()
+          if (direction === 'buy') {
+            if (request.amountType === 'fiat') {
+              fiatAmount = exchangeAmount.toString()
+              cryptoAmount = dfxQuote.estimatedAmount.toString()
+            } else {
+              cryptoAmount = exchangeAmount.toString()
+              fiatAmount = dfxQuote.amount?.toString() ?? '0'
+            }
           } else {
-            // User entered crypto amount for sell
-            // amount = crypto confirmed, estimatedAmount = fiat received
-            cryptoAmount = exchangeAmount.toString()
-            fiatAmount = dfxQuote.estimatedAmount.toString()
+            if (request.amountType === 'fiat') {
+              fiatAmount = exchangeAmount.toString()
+              cryptoAmount = dfxQuote.amount?.toString() ?? '0'
+            } else {
+              cryptoAmount = exchangeAmount.toString()
+              fiatAmount = dfxQuote.estimatedAmount.toString()
+            }
           }
 
           const settlementRange = getSettlementRange(
