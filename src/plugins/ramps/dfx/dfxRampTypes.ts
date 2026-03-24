@@ -85,6 +85,7 @@ export type DfxQuote = ReturnType<typeof asDfxQuote>
 
 export const asDfxBuyPaymentInfo = asObject({
   id: asNumber,
+  uid: asString,
   iban: asOptional(asString),
   bic: asOptional(asString),
   remittanceInfo: asOptional(asString),
@@ -105,6 +106,7 @@ export type DfxBuyPaymentInfo = ReturnType<typeof asDfxBuyPaymentInfo>
 
 export const asDfxSellPaymentInfo = asObject({
   id: asNumber,
+  uid: asString,
   depositAddress: asString,
   amount: asNumber,
   isValid: asOptional(asBoolean),

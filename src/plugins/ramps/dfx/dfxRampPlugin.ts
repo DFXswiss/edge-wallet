@@ -920,7 +920,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                     walletAddress: receiveAddress
                   },
                   paymentDetails: {
-                    id: paymentInfo.id.toString(),
+                    id: paymentInfo.uid,
                     iban: paymentInfo.iban ?? '',
                     swiftBic: paymentInfo.bic ?? '',
                     recipient: 'DFX AG',
@@ -1030,7 +1030,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                             exchangeAmount: cryptoAmount
                           }),
                           fiatProviderId: pluginId,
-                          orderId: paymentInfo.id.toString()
+                          orderId: paymentInfo.uid
                         }
                       })
                       navigation.pop()
@@ -1122,8 +1122,8 @@ export const dfxRampPlugin: RampPluginFactory = (
                     }
                     const savedAction: EdgeTxActionFiat = {
                       actionType: 'fiat',
-                      orderId: sellInfo.id.toString(),
-                      orderUri: `${webAppUrl}/tx/${sellInfo.id}`,
+                      orderId: sellInfo.uid,
+                      orderUri: `${webAppUrl}/tx/${sellInfo.uid}`,
                       isEstimate: true,
                       fiatPlugin: {
                         providerId: pluginId,
@@ -1203,7 +1203,7 @@ export const dfxRampPlugin: RampPluginFactory = (
                               exchangeAmount: cryptoAmount
                             }),
                             fiatProviderId: pluginId,
-                            orderId: sellInfo.id.toString()
+                            orderId: sellInfo.uid
                           }
                         })
 
@@ -1219,7 +1219,8 @@ export const dfxRampPlugin: RampPluginFactory = (
                           })
                         }
 
-                        navigation.pop()
+                        // Pop both send2 and SEPA form screens
+                        navigation.pop(2)
 
                         const message =
                           sprintf(
